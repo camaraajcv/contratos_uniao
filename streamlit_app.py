@@ -1,12 +1,16 @@
 import streamlit as st
 import requests
 import pandas as pd
+from datetime import datetime
 
 # --- Função consultar_contratos ---
 @st.cache_data(show_spinner=True)
 def consultar_contratos(codigo_orgao: str, cnpj: str = None,
                         data_inicio: str = None, data_fim: str = None,
                         valor_minimo: float = None, max_paginas: int = 50) -> pd.DataFrame:
+    """
+    Consulta contratos do Portal da Transparência e retorna um DataFrame limpo.
+    """
     BASE_URL = "https://api.portaldatransparencia.gov.br/api-de-dados/contratos"
     HEADERS = {"chave-api-dados": st.secrets["PORTAL_TRANSPARENCIA_TOKEN"]}
 
@@ -71,17 +75,18 @@ def consultar_contratos(codigo_orgao: str, cnpj: str = None,
 # --- Fim da função ---
 
 
-# --- Streamlit app ---
+# --- Streamlit App ---
 st.set_page_config(page_title="Consulta de Contratos – Governo Federal", layout="wide")
 st.title("📄 Consulta de Contratos – Governo Federal")
 
+# Sidebar com filtros
 with st.sidebar:
     st.header("🔍 Filtros")
     codigo_orgao = st.text_input("Código do Órgão (obrigatório)")
     cnpj = st.text_input("CNPJ do Fornecedor (opcional)")
-    data_inicio = st.date_input("Data inicial da vigência (opcional)", value=None)
-    data_fim = st.date_input("Data final da vigência (opcional)", value=None)
+    anos = st.slider("Ano de início da vigência", 2000, datetime.today().year, (2000, datetime.today().year))
     valor_minimo = st.number_input("Valor mínimo do contrato (opcional)", min_value=0.0, step=1000.0)
+    vigentes_hoje = st.checkbox("Apenas contratos vigentes")
     buscar = st.button("🔎 Buscar contratos")
 
 if buscar:
@@ -90,27 +95,40 @@ if buscar:
     else:
         with st.spinner("Consultando contratos..."):
             try:
+                # Definir datas de filtro pelo slider
+                data_inicio_filtro = f"{anos[0]}-01-01"
+                data_fim_filtro = f"{anos[1]}-12-31"
+
                 df = consultar_contratos(
                     codigo_orgao=codigo_orgao,
                     cnpj=cnpj if cnpj else None,
-                    data_inicio=data_inicio.strftime("%Y-%m-%d") if data_inicio else None,
-                    data_fim=data_fim.strftime("%Y-%m-%d") if data_fim else None,
+                    data_inicio=data_inicio_filtro,
+                    data_fim=data_fim_filtro,
                     valor_minimo=valor_minimo if valor_minimo > 0 else None
                 )
 
                 if df.empty:
                     st.warning("Nenhum contrato encontrado para os filtros informados.")
                 else:
-                    st.success(f"{len(df)} contratos encontrados")
-                    st.dataframe(df, use_container_width=True)
+                    # Filtrar apenas contratos vigentes
+                    if vigentes_hoje:
+                        hoje = pd.Timestamp.today()
+                        df = df[df["dataFimVigencia"] >= hoje]
 
-                    # Download Excel
-                    excel_bytes = df.to_excel(index=False, engine="openpyxl")
-                    st.download_button(
-                        "⬇️ Baixar Excel",
-                        data=excel_bytes,
-                        file_name="contratos_governo_federal.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                    if df.empty:
+                        st.warning("Nenhum contrato vigente encontrado para os filtros informados.")
+                    else:
+                        st.success(f"{len(df)} contratos encontrados")
+                        st.dataframe(df, use_container_width=True)
+
+                        # Download Excel
+                        excel_bytes = df.to_excel(index=False, engine="openpyxl")
+                        st.download_button(
+                            "⬇️ Baixar Excel",
+                            data=excel_bytes,
+                            file_name="contratos_governo_federal.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+
             except Exception as e:
                 st.error(str(e))
