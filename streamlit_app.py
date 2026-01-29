@@ -10,7 +10,8 @@ headers = {
 }
 
 params = {
-    "pagina": 1
+    "pagina": 1,
+    "codigoOrgao": "52921"
 }
 
 response = requests.get(url, headers=headers, params=params)
