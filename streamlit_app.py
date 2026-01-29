@@ -4,27 +4,26 @@ import pandas as pd
 from datetime import datetime
 from io import BytesIO
 
-# --- Função consultar_contratos ---
+# --- Função para consultar contratos ---
 @st.cache_data(show_spinner=True)
-def consultar_contratos(codigo_orgao: str, cnpj: str = None,
+def consultar_contratos(codigo_orgao: str, ug_executora: str,
                         data_inicio: str = None, data_fim: str = None,
                         valor_minimo: float = None, max_paginas: int = 50) -> pd.DataFrame:
     """
-    Consulta contratos do Portal da Transparência e retorna um DataFrame limpo.
+    Consulta contratos do Portal da Transparência e retorna um DataFrame limpo,
+    incluindo UG Executora (UG de Compras) e UG Responsável (Gestora).
     """
     BASE_URL = "https://api.portaldatransparencia.gov.br/api-de-dados/contratos"
     HEADERS = {"chave-api-dados": st.secrets["PORTAL_TRANSPARENCIA_TOKEN"]}
-
-    if not codigo_orgao:
-        raise ValueError("O parâmetro 'codigo_orgao' é obrigatório!")
 
     todos_dados = []
     pagina = 1
 
     while pagina <= max_paginas:
-        params = {"pagina": pagina, "codigoOrgao": codigo_orgao}
-        if cnpj:
-            params["cpfCnpjFornecedor"] = cnpj
+        params = {
+            "pagina": pagina,
+            "codigoOrgao": codigo_orgao
+        }
         if data_inicio:
             params["dataInicioVigencia"] = data_inicio
         if data_fim:
@@ -60,6 +59,15 @@ def consultar_contratos(codigo_orgao: str, cnpj: str = None,
             "dataFimVigencia": c.get("dataFimVigencia"),
             "nomeFornecedor": c.get("fornecedor", {}).get("nome") or c.get("fornecedor", {}).get("razaoSocialReceita"),
             "cnpjFornecedor": c.get("fornecedor", {}).get("cnpjFormatado") or c.get("fornecedor", {}).get("cnpj"),
+            
+            # UG Executora → unidadeGestoraCompras
+            "codigoUGExecutora": c.get("unidadeGestoraCompras", {}).get("codigo"),
+            "nomeUGExecutora": c.get("unidadeGestoraCompras", {}).get("nome"),
+
+            # UG Responsável → unidadeGestora
+            "codigoUGResponsavel": c.get("unidadeGestora", {}).get("codigo"),
+            "nomeUGResponsavel": c.get("unidadeGestora", {}).get("nome"),
+
             "codigoOrgao": c.get("unidadeGestora", {}).get("orgaoVinculado", {}).get("codigoSIAFI"),
             "nomeOrgao": c.get("unidadeGestora", {}).get("orgaoVinculado", {}).get("nome")
         })
@@ -72,6 +80,9 @@ def consultar_contratos(codigo_orgao: str, cnpj: str = None,
     df["valorInicial"] = pd.to_numeric(df["valorInicial"], errors="coerce")
     df["valorFinal"] = pd.to_numeric(df["valorFinal"], errors="coerce")
 
+    # Filtrar apenas contratos da UG executora informada
+    df = df[df["codigoUGExecutora"] == ug_executora]
+
     return df
 # --- Fim da função ---
 
@@ -80,35 +91,37 @@ def consultar_contratos(codigo_orgao: str, cnpj: str = None,
 st.set_page_config(page_title="Consulta de Contratos – Governo Federal", layout="wide")
 st.title("📄 Consulta de Contratos – Governo Federal")
 
-# Sidebar com filtros
+# Sidebar com filtros obrigatórios e opcionais
 with st.sidebar:
-    st.header("🔍 Filtros")
-    codigo_orgao = st.text_input("Código do Órgão (obrigatório)")
-    cnpj = st.text_input("CNPJ do Fornecedor (opcional)")
+    st.header("🔍 Filtros obrigatórios")
+    codigo_orgao = st.text_input("Código do Órgão")
+    ug_executora = st.text_input("Código da UG Executora (UG de Compras)")
+    
+    st.header("Filtros opcionais")
     anos = st.slider(
         "Ano de início da vigência",
         2000,
         datetime.today().year,
         (2000, datetime.today().year)
     )
-    valor_minimo = st.number_input("Valor mínimo do contrato (opcional)", min_value=0.0, step=1000.0)
+    valor_minimo = st.number_input("Valor mínimo do contrato", min_value=0.0, step=1000.0)
     vigentes_hoje = st.checkbox("Apenas contratos vigentes")
     buscar = st.button("🔎 Buscar contratos")
 
+# Rodar busca
 if buscar:
-    if not codigo_orgao:
-        st.warning("Digite o código do órgão antes de buscar!")
+    if not codigo_orgao or not ug_executora:
+        st.warning("Digite o Código do Órgão e da UG Executora para prosseguir!")
     else:
         with st.spinner("Consultando contratos..."):
             try:
-                # Definir datas de filtro pelo slider
                 data_inicio_filtro = f"{anos[0]}-01-01"
                 data_fim_filtro = f"{anos[1]}-12-31"
 
                 # Chamar função
                 df = consultar_contratos(
                     codigo_orgao=codigo_orgao,
-                    cnpj=cnpj if cnpj else None,
+                    ug_executora=ug_executora,
                     data_inicio=data_inicio_filtro,
                     data_fim=data_fim_filtro,
                     valor_minimo=valor_minimo if valor_minimo > 0 else None
