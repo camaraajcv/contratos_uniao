@@ -3,9 +3,7 @@ import pandas as pd
 import streamlit as st
 
 BASE_URL = "https://api.portaldatransparencia.gov.br/api-de-dados/contratos"
-HEADERS = {
-    "chave-api-dados": st.secrets["PORTAL_TRANSPARENCIA_TOKEN"]
-}
+HEADERS = {"chave-api-dados": st.secrets["PORTAL_TRANSPARENCIA_TOKEN"]}
 
 @st.cache_data(show_spinner=True)
 def consultar_contratos(
@@ -17,8 +15,7 @@ def consultar_contratos(
     max_paginas: int = 50
 ) -> pd.DataFrame:
     """
-    Consulta contratos do Portal da Transparência.
-    Retorna um DataFrame limpo.
+    Consulta contratos do Portal da Transparência e retorna um DataFrame limpo.
     """
     if not codigo_orgao:
         raise ValueError("O parâmetro 'codigo_orgao' é obrigatório!")
@@ -28,7 +25,6 @@ def consultar_contratos(
 
     while pagina <= max_paginas:
         params = {"pagina": pagina, "codigoOrgao": codigo_orgao}
-
         if cnpj:
             params["cpfCnpjFornecedor"] = cnpj
         if data_inicio:
@@ -46,7 +42,7 @@ def consultar_contratos(
             raise Exception(f"Erro na API: {response.status_code} - {response.text}")
 
         dados = response.json()
-        if not dados:  # sem mais registros
+        if not dados:
             break
 
         todos_dados.extend(dados)
@@ -55,32 +51,29 @@ def consultar_contratos(
     if not todos_dados:
         return pd.DataFrame()
 
-    # Transformar em DataFrame
-    df = pd.DataFrame(todos_dados)
+    # Transformar JSON em DataFrame
+    registros = []
+    for contrato in todos_dados:
+        registros.append({
+            "numeroContrato": contrato.get("numero") or contrato.get("numeroContrato"),
+            "objeto": contrato.get("objeto"),
+            "situacao": contrato.get("situacaoContrato"),
+            "valorInicial": contrato.get("valorInicialCompra"),
+            "valorFinal": contrato.get("valorFinalCompra"),
+            "dataInicioVigencia": contrato.get("dataInicioVigencia"),
+            "dataFimVigencia": contrato.get("dataFimVigencia"),
+            "nomeFornecedor": contrato.get("fornecedor", {}).get("nome") or contrato.get("fornecedor", {}).get("razaoSocialReceita"),
+            "cnpjFornecedor": contrato.get("fornecedor", {}).get("cnpjFormatado") or contrato.get("fornecedor", {}).get("cnpj"),
+            "codigoOrgao": contrato.get("unidadeGestora", {}).get("orgaoVinculado", {}).get("codigoSIAFI"),
+            "nomeOrgao": contrato.get("unidadeGestora", {}).get("orgaoVinculado", {}).get("nome")
+        })
 
-    # Selecionar colunas principais (limpeza)
-    colunas_desejadas = [
-        "numeroContrato",
-        "objeto",
-        "valorInicial",
-        "dataInicioVigencia",
-        "dataFimVigencia",
-        "nomeFornecedor",
-        "cnpjFornecedor",
-        "situacao",
-        "orgaoSuperior",
-        "orgao"
-    ]
+    df = pd.DataFrame(registros)
 
-    df = df[[col for col in colunas_desejadas if col in df.columns]]
-
-    # Padronizar datas
+    # Converter datas e valores
     for col in ["dataInicioVigencia", "dataFimVigencia"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
-
-    # Padronizar valores
-    if "valorInicial" in df.columns:
-        df["valorInicial"] = pd.to_numeric(df["valorInicial"], errors="coerce")
+        df[col] = pd.to_datetime(df[col], errors="coerce")
+    df["valorInicial"] = pd.to_numeric(df["valorInicial"], errors="coerce")
+    df["valorFinal"] = pd.to_numeric(df["valorFinal"], errors="coerce")
 
     return df
