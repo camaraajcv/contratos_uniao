@@ -6,11 +6,10 @@ from io import BytesIO
 
 # --- Função para consultar contratos ---
 @st.cache_data(show_spinner=True)
-def consultar_contratos(codigo_orgao: str, ug_executora: str,
-                        data_inicio: str = None, data_fim: str = None,
-                        valor_minimo: float = None, max_paginas: int = 50) -> pd.DataFrame:
+def consultar_contratos_vigentes(codigo_orgao: str, ug_executora: str,
+                                 valor_minimo: float = None, max_paginas: int = 50) -> pd.DataFrame:
     """
-    Consulta contratos do Portal da Transparência e retorna um DataFrame limpo,
+    Consulta contratos vigentes do Portal da Transparência e retorna um DataFrame limpo,
     incluindo UG Executora (UG de Compras) e UG Responsável (Gestora).
     """
     BASE_URL = "https://api.portaldatransparencia.gov.br/api-de-dados/contratos"
@@ -24,10 +23,6 @@ def consultar_contratos(codigo_orgao: str, ug_executora: str,
             "pagina": pagina,
             "codigoOrgao": codigo_orgao
         }
-        if data_inicio:
-            params["dataInicioVigencia"] = data_inicio
-        if data_fim:
-            params["dataFimVigencia"] = data_fim
         if valor_minimo:
             params["valorMinimo"] = valor_minimo
 
@@ -80,6 +75,10 @@ def consultar_contratos(codigo_orgao: str, ug_executora: str,
     df["valorInicial"] = pd.to_numeric(df["valorInicial"], errors="coerce")
     df["valorFinal"] = pd.to_numeric(df["valorFinal"], errors="coerce")
 
+    # Filtrar apenas contratos vigentes
+    hoje = pd.Timestamp.today()
+    df = df[df["dataFimVigencia"] >= hoje]
+
     # Filtrar apenas contratos da UG executora informada
     df = df[df["codigoUGExecutora"] == ug_executora]
 
@@ -88,70 +87,48 @@ def consultar_contratos(codigo_orgao: str, ug_executora: str,
 
 
 # --- Streamlit App ---
-st.set_page_config(page_title="Consulta de Contratos – Governo Federal", layout="wide")
-st.title("📄 Consulta de Contratos – Governo Federal")
+st.set_page_config(page_title="Contratos Vigentes – Governo Federal", layout="wide")
+st.title("📄 Contratos Vigentes – Governo Federal")
 
-# Sidebar com filtros obrigatórios e opcionais
+# Sidebar com filtros obrigatórios
 with st.sidebar:
     st.header("🔍 Filtros obrigatórios")
     codigo_orgao = st.text_input("Código do Órgão")
     ug_executora = st.text_input("Código da UG Executora (UG de Compras)")
-    
-    st.header("Filtros opcionais")
-    anos = st.slider(
-        "Ano de início da vigência",
-        2000,
-        datetime.today().year,
-        (2000, datetime.today().year)
-    )
     valor_minimo = st.number_input("Valor mínimo do contrato", min_value=0.0, step=1000.0)
-    vigentes_hoje = st.checkbox("Apenas contratos vigentes")
-    buscar = st.button("🔎 Buscar contratos")
+    buscar = st.button("🔎 Buscar contratos vigentes")
 
 # Rodar busca
 if buscar:
     if not codigo_orgao or not ug_executora:
         st.warning("Digite o Código do Órgão e da UG Executora para prosseguir!")
     else:
-        with st.spinner("Consultando contratos..."):
+        with st.spinner("Consultando contratos vigentes..."):
             try:
-                data_inicio_filtro = f"{anos[0]}-01-01"
-                data_fim_filtro = f"{anos[1]}-12-31"
-
                 # Chamar função
-                df = consultar_contratos(
+                df = consultar_contratos_vigentes(
                     codigo_orgao=codigo_orgao,
                     ug_executora=ug_executora,
-                    data_inicio=data_inicio_filtro,
-                    data_fim=data_fim_filtro,
                     valor_minimo=valor_minimo if valor_minimo > 0 else None
                 )
 
                 if df.empty:
-                    st.warning("Nenhum contrato encontrado para os filtros informados.")
+                    st.warning("Nenhum contrato vigente encontrado para os filtros informados.")
                 else:
-                    # Filtrar apenas contratos vigentes
-                    if vigentes_hoje:
-                        hoje = pd.Timestamp.today()
-                        df = df[df["dataFimVigencia"] >= hoje]
+                    st.success(f"{len(df)} contratos vigentes encontrados")
+                    st.dataframe(df, use_container_width=True)
 
-                    if df.empty:
-                        st.warning("Nenhum contrato vigente encontrado para os filtros informados.")
-                    else:
-                        st.success(f"{len(df)} contratos encontrados")
-                        st.dataframe(df, use_container_width=True)
+                    # Download Excel
+                    output = BytesIO()
+                    df.to_excel(output, index=False, engine="openpyxl")
+                    excel_bytes = output.getvalue()
 
-                        # Download Excel
-                        output = BytesIO()
-                        df.to_excel(output, index=False, engine="openpyxl")
-                        excel_bytes = output.getvalue()
-
-                        st.download_button(
-                            "⬇️ Baixar Excel",
-                            data=excel_bytes,
-                            file_name="contratos_governo_federal.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                    st.download_button(
+                        "⬇️ Baixar Excel",
+                        data=excel_bytes,
+                        file_name="contratos_vigentes.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
             except Exception as e:
                 st.error(str(e))
