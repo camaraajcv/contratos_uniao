@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
+from io import BytesIO
 
 # --- Função consultar_contratos ---
 @st.cache_data(show_spinner=True)
@@ -84,7 +85,12 @@ with st.sidebar:
     st.header("🔍 Filtros")
     codigo_orgao = st.text_input("Código do Órgão (obrigatório)")
     cnpj = st.text_input("CNPJ do Fornecedor (opcional)")
-    anos = st.slider("Ano de início da vigência", 2000, datetime.today().year, (2000, datetime.today().year))
+    anos = st.slider(
+        "Ano de início da vigência",
+        2000,
+        datetime.today().year,
+        (2000, datetime.today().year)
+    )
     valor_minimo = st.number_input("Valor mínimo do contrato (opcional)", min_value=0.0, step=1000.0)
     vigentes_hoje = st.checkbox("Apenas contratos vigentes")
     buscar = st.button("🔎 Buscar contratos")
@@ -99,6 +105,7 @@ if buscar:
                 data_inicio_filtro = f"{anos[0]}-01-01"
                 data_fim_filtro = f"{anos[1]}-12-31"
 
+                # Chamar função
                 df = consultar_contratos(
                     codigo_orgao=codigo_orgao,
                     cnpj=cnpj if cnpj else None,
@@ -122,7 +129,10 @@ if buscar:
                         st.dataframe(df, use_container_width=True)
 
                         # Download Excel
-                        excel_bytes = df.to_excel(index=False, engine="openpyxl")
+                        output = BytesIO()
+                        df.to_excel(output, index=False, engine="openpyxl")
+                        excel_bytes = output.getvalue()
+
                         st.download_button(
                             "⬇️ Baixar Excel",
                             data=excel_bytes,
