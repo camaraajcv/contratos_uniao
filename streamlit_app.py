@@ -3,26 +3,27 @@ import requests
 import pandas as pd
 from datetime import datetime
 from io import BytesIO
+import time
 
-# --- Função para consultar contratos ---
-@st.cache_data(show_spinner=True)
-def consultar_contratos_vigentes(codigo_orgao: str, ug_executora: str,
-                                 valor_minimo: float = None, max_paginas: int = 50) -> pd.DataFrame:
+# --- Função progressiva para consultar contratos ---
+def consultar_contratos_progressivo(codigo_orgao: str, ug_executora: str,
+                                    valor_minimo: float = None, max_paginas: int = 1000) -> pd.DataFrame:
     """
-    Consulta contratos vigentes do Portal da Transparência e retorna um DataFrame limpo,
-    incluindo UG Executora (UG de Compras) e UG Responsável (Gestora).
+    Consulta todas as páginas de contratos de um órgão, filtra por UG executora e contratos vigentes.
+    Mostra progressivamente os resultados.
     """
     BASE_URL = "https://api.portaldatransparencia.gov.br/api-de-dados/contratos"
     HEADERS = {"chave-api-dados": st.secrets["PORTAL_TRANSPARENCIA_TOKEN"]}
 
-    todos_dados = []
+    registros_filtrados = []
     pagina = 1
+    hoje = pd.Timestamp.today()
+
+    progresso_text = st.empty()
+    progresso_bar = st.progress(0)
 
     while pagina <= max_paginas:
-        params = {
-            "pagina": pagina,
-            "codigoOrgao": codigo_orgao
-        }
+        params = {"pagina": pagina}
         if valor_minimo:
             params["valorMinimo"] = valor_minimo
 
@@ -35,39 +36,37 @@ def consultar_contratos_vigentes(codigo_orgao: str, ug_executora: str,
         if not dados:
             break
 
-        todos_dados.extend(dados)
+        # Processar e filtrar apenas os contratos da UG executora e vigentes
+        for c in dados:
+            codigo_ug_exec = c.get("unidadeGestoraCompras", {}).get("codigo")
+            data_fim = c.get("dataFimVigencia")
+            if codigo_ug_exec == ug_executora and data_fim and pd.to_datetime(data_fim, errors="coerce") >= hoje:
+                registros_filtrados.append({
+                    "numeroContrato": c.get("numero") or c.get("numeroContrato"),
+                    "objeto": c.get("objeto"),
+                    "situacao": c.get("situacaoContrato"),
+                    "valorInicial": c.get("valorInicialCompra"),
+                    "valorFinal": c.get("valorFinalCompra"),
+                    "dataInicioVigencia": c.get("dataInicioVigencia"),
+                    "dataFimVigencia": c.get("dataFimVigencia"),
+                    "nomeFornecedor": c.get("fornecedor", {}).get("nome") or c.get("fornecedor", {}).get("razaoSocialReceita"),
+                    "cnpjFornecedor": c.get("fornecedor", {}).get("cnpjFormatado") or c.get("fornecedor", {}).get("cnpj"),
+                    "codigoUGExecutora": codigo_ug_exec,
+                    "nomeUGExecutora": c.get("unidadeGestoraCompras", {}).get("nome"),
+                    "codigoUGResponsavel": c.get("unidadeGestora", {}).get("codigo"),
+                    "nomeUGResponsavel": c.get("unidadeGestora", {}).get("nome"),
+                    "codigoOrgao": c.get("unidadeGestora", {}).get("orgaoVinculado", {}).get("codigoSIAFI"),
+                    "nomeOrgao": c.get("unidadeGestora", {}).get("orgaoVinculado", {}).get("nome")
+                })
+
+        # Atualiza barra de progresso e mensagem
+        progresso_text.text(f"Consultando página {pagina}...")
+        progresso_bar.progress(min(pagina / max_paginas, 1.0))
+
         pagina += 1
+        time.sleep(0.1)  # Pequena pausa para não sobrecarregar a API
 
-    if not todos_dados:
-        return pd.DataFrame()
-
-    # Transformar JSON em DataFrame limpo
-    registros = []
-    for c in todos_dados:
-        registros.append({
-            "numeroContrato": c.get("numero") or c.get("numeroContrato"),
-            "objeto": c.get("objeto"),
-            "situacao": c.get("situacaoContrato"),
-            "valorInicial": c.get("valorInicialCompra"),
-            "valorFinal": c.get("valorFinalCompra"),
-            "dataInicioVigencia": c.get("dataInicioVigencia"),
-            "dataFimVigencia": c.get("dataFimVigencia"),
-            "nomeFornecedor": c.get("fornecedor", {}).get("nome") or c.get("fornecedor", {}).get("razaoSocialReceita"),
-            "cnpjFornecedor": c.get("fornecedor", {}).get("cnpjFormatado") or c.get("fornecedor", {}).get("cnpj"),
-            
-            # UG Executora → unidadeGestoraCompras
-            "codigoUGExecutora": c.get("unidadeGestoraCompras", {}).get("codigo"),
-            "nomeUGExecutora": c.get("unidadeGestoraCompras", {}).get("nome"),
-
-            # UG Responsável → unidadeGestora
-            "codigoUGResponsavel": c.get("unidadeGestora", {}).get("codigo"),
-            "nomeUGResponsavel": c.get("unidadeGestora", {}).get("nome"),
-
-            "codigoOrgao": c.get("unidadeGestora", {}).get("orgaoVinculado", {}).get("codigoSIAFI"),
-            "nomeOrgao": c.get("unidadeGestora", {}).get("orgaoVinculado", {}).get("nome")
-        })
-
-    df = pd.DataFrame(registros)
+    df = pd.DataFrame(registros_filtrados)
 
     # Converter datas e valores
     for col in ["dataInicioVigencia", "dataFimVigencia"]:
@@ -75,22 +74,13 @@ def consultar_contratos_vigentes(codigo_orgao: str, ug_executora: str,
     df["valorInicial"] = pd.to_numeric(df["valorInicial"], errors="coerce")
     df["valorFinal"] = pd.to_numeric(df["valorFinal"], errors="coerce")
 
-    # Filtrar apenas contratos vigentes
-    hoje = pd.Timestamp.today()
-    df = df[df["dataFimVigencia"] >= hoje]
-
-    # Filtrar apenas contratos da UG executora informada
-    df = df[df["codigoUGExecutora"] == ug_executora]
-
     return df
-# --- Fim da função ---
-
 
 # --- Streamlit App ---
 st.set_page_config(page_title="Contratos Vigentes – Governo Federal", layout="wide")
-st.title("📄 Contratos Vigentes – Governo Federal")
+st.title("📄 Contratos Vigentes – Governo Federal (Progressivo)")
 
-# Sidebar com filtros obrigatórios
+# Sidebar
 with st.sidebar:
     st.header("🔍 Filtros obrigatórios")
     codigo_orgao = st.text_input("Código do Órgão")
@@ -103,32 +93,32 @@ if buscar:
     if not codigo_orgao or not ug_executora:
         st.warning("Digite o Código do Órgão e da UG Executora para prosseguir!")
     else:
-        with st.spinner("Consultando contratos vigentes..."):
-            try:
-                # Chamar função
-                df = consultar_contratos_vigentes(
-                    codigo_orgao=codigo_orgao,
-                    ug_executora=ug_executora,
-                    valor_minimo=valor_minimo if valor_minimo > 0 else None
+        try:
+            st.info("Consultando todas as páginas do órgão, filtrando contratos vigentes...")
+            df = consultar_contratos_progressivo(
+                codigo_orgao=codigo_orgao,
+                ug_executora=ug_executora,
+                valor_minimo=valor_minimo if valor_minimo > 0 else None,
+                max_paginas=500  # Pode ajustar para órgãos muito grandes
+            )
+
+            if df.empty:
+                st.warning("Nenhum contrato vigente encontrado para os filtros informados.")
+            else:
+                st.success(f"{len(df)} contratos vigentes encontrados")
+                st.dataframe(df, use_container_width=True)
+
+                # Download Excel
+                output = BytesIO()
+                df.to_excel(output, index=False, engine="openpyxl")
+                excel_bytes = output.getvalue()
+
+                st.download_button(
+                    "⬇️ Baixar Excel",
+                    data=excel_bytes,
+                    file_name="contratos_vigentes_progressivo.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
-                if df.empty:
-                    st.warning("Nenhum contrato vigente encontrado para os filtros informados.")
-                else:
-                    st.success(f"{len(df)} contratos vigentes encontrados")
-                    st.dataframe(df, use_container_width=True)
-
-                    # Download Excel
-                    output = BytesIO()
-                    df.to_excel(output, index=False, engine="openpyxl")
-                    excel_bytes = output.getvalue()
-
-                    st.download_button(
-                        "⬇️ Baixar Excel",
-                        data=excel_bytes,
-                        file_name="contratos_vigentes.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-
-            except Exception as e:
-                st.error(str(e))
+        except Exception as e:
+            st.error(str(e))
