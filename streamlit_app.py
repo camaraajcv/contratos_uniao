@@ -11,7 +11,7 @@ headers = {
 
 params = {
     "pagina": 1,
-    "codigoOrgao": "52921"
+    "codigoOrgao": "52111"
 }
 
 response = requests.get(url, headers=headers, params=params)
