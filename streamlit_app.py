@@ -7,7 +7,7 @@ import time
 
 # --- Função progressiva para consultar contratos ---
 def consultar_contratos_progressivo(codigo_orgao: str, ug_executora: str,
-                                    valor_minimo: float = None, max_paginas: int = 1000) -> pd.DataFrame:
+                                    valor_minimo: float = None, max_paginas: int = 500) -> pd.DataFrame:
     """
     Consulta todas as páginas de contratos de um órgão, filtra por UG executora e contratos vigentes.
     Mostra progressivamente os resultados.
@@ -23,7 +23,11 @@ def consultar_contratos_progressivo(codigo_orgao: str, ug_executora: str,
     progresso_bar = st.progress(0)
 
     while pagina <= max_paginas:
-        params = {"pagina": pagina}
+        # ✅ Enviar sempre codigoOrgao em cada requisição
+        params = {
+            "pagina": pagina,
+            "codigoOrgao": codigo_orgao
+        }
         if valor_minimo:
             params["valorMinimo"] = valor_minimo
 
