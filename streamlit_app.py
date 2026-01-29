@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+from services import consultar_contratos
 
 API_TOKEN = st.secrets["PORTAL_TRANSPARENCIA_TOKEN"]
 
